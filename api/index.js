@@ -7,6 +7,8 @@ const ALLOWED_ORIGINS = [
   'http://chat.alvaspec.my.id',
   'https://alternativechatai.ct.ws',
   'http://alternativechatai.ct.ws',
+  'https://alter-ai-bmbd3azfg-alvaro19371s-projects.vercel.app',
+  null, // allow no-origin requests
 ];
 
 function needsSearch(text) {
@@ -52,7 +54,7 @@ async function googleSearch(query) {
 
 export default async function handler(req, res) {
   const origin = req.headers['origin'] || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
+  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : '*';
 
   res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
