@@ -106,8 +106,23 @@ export default async function handler(req, res) {
     });
 
     const groqData = await groqRes.json();
-    if (groqData.error)
-      return res.status(500).json({ error: groqData.error.message || 'Groq API error' });
+    if (groqData.error) {
+      const errMsg = groqData.error.message || '';
+      const errType = groqData.error.type || '';
+      // Decommissioned model
+      if (errMsg.includes('decommissioned') || errMsg.includes('no longer supported')) {
+        return res.status(500).json({ error: '__MODEL_UNAVAILABLE__' });
+      }
+      // Rate limit / token limit
+      if (groqRes.status === 429 || errType === 'tokens' || errMsg.includes('rate_limit') || errMsg.includes('Rate limit')) {
+        // Try to extract reset time from headers
+        const resetTokens = groqRes.headers.get('x-ratelimit-reset-tokens') || '';
+        const resetReqs   = groqRes.headers.get('x-ratelimit-reset-requests') || '';
+        const resetTime   = resetTokens || resetReqs || '';
+        return res.status(429).json({ error: '__RATE_LIMIT__', resetTime });
+      }
+      return res.status(500).json({ error: errMsg || 'Groq API error' });
+    }
 
     return res.status(200).json(groqData);
   } catch (e) {
