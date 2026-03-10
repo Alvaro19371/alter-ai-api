@@ -1,5 +1,5 @@
 const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyDzAgVzweTL6qzxompH2yt6Vwhebj4b3Wg';
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyBtLoOaJZcR4r_qUFfrT-LIi_obFsapoKs';
 const GOOGLE_CX      = process.env.GOOGLE_CX      || 'd493bcb3fce7b462d';
 
 const ALLOWED_ORIGINS = [
