@@ -1,6 +1,6 @@
 const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyBtLoOaJZcR4r_qUFfrT-LIi_obFsapoKs';
-const GOOGLE_CX      = process.env.GOOGLE_CX      || 'd493bcb3fce7b462d';
+const GOOGLE_CX      = process.env.GOOGLE_CX      || '65f7a9d97cdc54e3a';
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
