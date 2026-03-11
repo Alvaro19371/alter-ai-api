@@ -1,6 +1,5 @@
 const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || 'AIzaSyBtLoOaJZcR4r_qUFfrT-LIi_obFsapoKs';
-const GOOGLE_CX      = process.env.GOOGLE_CX      || '65f7a9d97cdc54e3a';
+const SERPER_API_KEY = process.env.SERPER_API_KEY || 'P07d1936b9301c7dcc4749e484f2b9e5ecd495574';
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
@@ -36,19 +35,29 @@ function needsSearch(text) {
   return t.split(/\s+/).length >= 5;
 }
 
-async function googleSearch(query) {
+async function webSearch(query) {
   try {
-    const url = 'https://www.googleapis.com/customsearch/v1?' + new URLSearchParams({
-      key: GOOGLE_API_KEY, cx: GOOGLE_CX, q: query, num: '5', hl: 'id',
+    const res = await fetch('https://google.serper.dev/search', {
+      method: 'POST',
+      headers: {
+        'X-API-KEY': SERPER_API_KEY,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ q: query, num: 5, hl: 'id', gl: 'id' }),
     });
-    const res = await fetch(url);
     if (!res.ok) return null;
     const json = await res.json();
-    if (!json.items?.length) return null;
-    return json.items
-      .filter(i => i.snippet)
-      .map(i => `• ${i.title}\n  ${i.snippet}\n  (${i.link})`)
-      .join('\n\n');
+    const results = [];
+    // Ambil answer box kalau ada
+    if (json.answerBox?.answer) results.push(`📌 ${json.answerBox.answer}`);
+    if (json.answerBox?.snippet) results.push(`📌 ${json.answerBox.snippet}`);
+    // Ambil organic results
+    if (json.organic?.length) {
+      json.organic.slice(0, 5).forEach(r => {
+        if (r.snippet) results.push(`• ${r.title}\n  ${r.snippet}\n  (${r.link})`);
+      });
+    }
+    return results.length ? results.join('\n\n') : null;
   } catch { return null; }
 }
 
@@ -77,7 +86,7 @@ export default async function handler(req, res) {
 
   // Inject search result
   if (needsSearch(lastUserMsg)) {
-    const searchResult = await googleSearch(lastUserMsg);
+    const searchResult = await webSearch(lastUserMsg);
     if (searchResult) {
       const ctx = `\n\n[HASIL PENCARIAN GOOGLE untuk: "${lastUserMsg}"]\n`
         + searchResult
