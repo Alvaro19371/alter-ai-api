@@ -83,12 +83,17 @@ export default async function handler(req, res) {
   for (const m of [...messages].reverse()) {
     if (m.role === 'user') { lastUserMsg = m.content; break; }
   }
+  // Extract plain text if content is array (vision message)
+  const lastUserText = Array.isArray(lastUserMsg)
+    ? (lastUserMsg.find(c => c.type === 'text')?.text || '')
+    : lastUserMsg;
 
   // Inject search result
-  if (needsSearch(lastUserMsg)) {
-    const searchResult = await webSearch(lastUserMsg);
+  const hasImage = Array.isArray(lastUserMsg);
+if (!hasImage && needsSearch(lastUserText)) {
+    const searchResult = await webSearch(lastUserText);
     if (searchResult) {
-      const ctx = `\n\n[HASIL PENCARIAN GOOGLE untuk: "${lastUserMsg}"]\n`
+      const ctx = `\n\n[HASIL PENCARIAN GOOGLE untuk: "${lastUserText}"]\n`
         + searchResult
         + `\n\nGunakan informasi di atas untuk menjawab dengan akurat dan terkini. `
         + `Jawab secara natural, jangan sebut bahwa kamu melakukan pencarian.`;
@@ -107,7 +112,7 @@ export default async function handler(req, res) {
         'Authorization': `Bearer ${GROQ_API_KEY}`,
       },
       body: JSON.stringify({
-        model: 'llama-3.3-70b-versatile',
+        model: data.model || 'llama-3.3-70b-versatile',
         max_tokens: 2048,
         temperature: 0.7,
         messages,
