@@ -1,4 +1,4 @@
-const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
+const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
 const SERPER_API_KEY = process.env.SERPER_API_KEY || 'P07d1936b9301c7dcc4749e484f2b9e5ecd495574';
 
 const ALLOWED_ORIGINS = [
