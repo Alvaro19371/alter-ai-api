@@ -1,5 +1,5 @@
-const GROQ_API_KEY   = process.env.GROQ_API_KEY   || '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';
-const SERPER_API_KEY = process.env.SERPER_API_KEY || 'P07d1936b9301c7dcc4749e484f2b9e5ecd495574';
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
