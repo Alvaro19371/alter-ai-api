@@ -129,7 +129,7 @@ export default async function handler(req, res) {
 
   // Kirim ke Gemini
   try {
-    const model = 'gemini-1.5-flash';
+    const model = 'gemini-2.5-flash';
     const { systemInstruction, contents } = toGeminiMessages(messages);
 
     const body = {
