@@ -1,4 +1,4 @@
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
 const ALLOWED_ORIGINS = [
@@ -7,7 +7,7 @@ const ALLOWED_ORIGINS = [
   'https://alternativechatai.ct.ws',
   'http://alternativechatai.ct.ws',
   'https://alter-ai-bmbd3azfg-alvaro19371s-projects.vercel.app',
-  null, // allow no-origin requests
+  null,
 ];
 
 function needsSearch(text) {
@@ -39,19 +39,14 @@ async function webSearch(query) {
   try {
     const res = await fetch('https://google.serper.dev/search', {
       method: 'POST',
-      headers: {
-        'X-API-KEY': SERPER_API_KEY,
-        'Content-Type': 'application/json',
-      },
+      headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ q: query, num: 5, hl: 'id', gl: 'id' }),
     });
     if (!res.ok) return null;
     const json = await res.json();
     const results = [];
-    // Ambil answer box kalau ada
     if (json.answerBox?.answer) results.push(`📌 ${json.answerBox.answer}`);
     if (json.answerBox?.snippet) results.push(`📌 ${json.answerBox.snippet}`);
-    // Ambil organic results
     if (json.organic?.length) {
       json.organic.slice(0, 5).forEach(r => {
         if (r.snippet) results.push(`• ${r.title}\n  ${r.snippet}\n  (${r.link})`);
@@ -59,6 +54,36 @@ async function webSearch(query) {
     }
     return results.length ? results.join('\n\n') : null;
   } catch { return null; }
+}
+
+// Convert OpenAI-style messages to Gemini format
+function toGeminiMessages(messages) {
+  const systemMsg = messages.find(m => m.role === 'system');
+  const systemInstruction = systemMsg ? { parts: [{ text: systemMsg.content }] } : null;
+
+  const contents = messages
+    .filter(m => m.role !== 'system')
+    .map(m => {
+      // Handle array content (vision)
+      if (Array.isArray(m.content)) {
+        const parts = m.content.map(c => {
+          if (c.type === 'text') return { text: c.text };
+          if (c.type === 'image_url') {
+            // data:mime;base64,xxx
+            const match = c.image_url.url.match(/^data:(.+);base64,(.+)$/);
+            if (match) return { inline_data: { mime_type: match[1], data: match[2] } };
+          }
+          return null;
+        }).filter(Boolean);
+        return { role: m.role === 'assistant' ? 'model' : 'user', parts };
+      }
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: m.content }]
+      };
+    });
+
+  return { systemInstruction, contents };
 }
 
 export default async function handler(req, res) {
@@ -83,14 +108,13 @@ export default async function handler(req, res) {
   for (const m of [...messages].reverse()) {
     if (m.role === 'user') { lastUserMsg = m.content; break; }
   }
-  // Extract plain text if content is array (vision message)
   const lastUserText = Array.isArray(lastUserMsg)
     ? (lastUserMsg.find(c => c.type === 'text')?.text || '')
     : lastUserMsg;
 
   // Inject search result
   const hasImage = Array.isArray(lastUserMsg);
-if (!hasImage && needsSearch(lastUserText)) {
+  if (!hasImage && needsSearch(lastUserText)) {
     const searchResult = await webSearch(lastUserText);
     if (searchResult) {
       const ctx = `\n\n[HASIL PENCARIAN GOOGLE untuk: "${lastUserText}"]\n`
@@ -103,42 +127,45 @@ if (!hasImage && needsSearch(lastUserText)) {
     }
   }
 
-  // Kirim ke Groq
+  // Kirim ke Gemini
   try {
-    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: data.model || 'llama-3.3-70b-versatile',
-        max_tokens: 2048,
-        temperature: 0.7,
-        messages,
-      }),
-    });
+    const model = 'gemini-1.5-flash';
+    const { systemInstruction, contents } = toGeminiMessages(messages);
 
-    const groqData = await groqRes.json();
-    if (groqData.error) {
-      const errMsg = groqData.error.message || '';
-      const errType = groqData.error.type || '';
-      // Decommissioned model
-      if (errMsg.includes('decommissioned') || errMsg.includes('no longer supported')) {
-        return res.status(500).json({ error: '__MODEL_UNAVAILABLE__' });
+    const body = {
+      contents,
+      generationConfig: {
+        maxOutputTokens: 2048,
+        temperature: 0.7,
+      },
+    };
+    if (systemInstruction) body.systemInstruction = systemInstruction;
+
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       }
-      // Rate limit / token limit
-      if (groqRes.status === 429 || errType === 'tokens' || errMsg.includes('rate_limit') || errMsg.includes('Rate limit')) {
-        // Try to extract reset time from headers
-        const resetTokens = groqRes.headers.get('x-ratelimit-reset-tokens') || '';
-        const resetReqs   = groqRes.headers.get('x-ratelimit-reset-requests') || '';
-        const resetTime   = resetTokens || resetReqs || '';
-        return res.status(429).json({ error: '__RATE_LIMIT__', resetTime });
-      }
-      return res.status(500).json({ error: errMsg || 'Groq API error' });
+    );
+
+    const geminiData = await geminiRes.json();
+
+    if (geminiData.error) {
+      const errMsg = geminiData.error.message || '';
+      const errCode = geminiData.error.code;
+      if (errCode === 429) return res.status(429).json({ error: '__RATE_LIMIT__', resetTime: '60s' });
+      if (errMsg.includes('not found') || errMsg.includes('deprecated')) return res.status(500).json({ error: '__MODEL_UNAVAILABLE__' });
+      return res.status(500).json({ error: errMsg || 'Gemini API error' });
     }
 
-    return res.status(200).json(groqData);
+    // Convert Gemini response to OpenAI-compatible format
+    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    return res.status(200).json({
+      choices: [{ message: { role: 'assistant', content: text } }]
+    });
+
   } catch (e) {
     return res.status(500).json({ error: 'Gagal menghubungi AI: ' + e.message });
   }
