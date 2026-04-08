@@ -1,4 +1,4 @@
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
@@ -9,6 +9,23 @@ const ALLOWED_ORIGINS = [
   null,
 ];
 
+// Konversi pesan ke format Gemini
+function toGeminiMessages(messages) {
+  const systemMsg = messages.find(m => m.role === 'system');
+  const systemInstruction = systemMsg ? { parts: [{ text: systemMsg.content }] } : null;
+
+  const contents = messages
+    .filter(m => m.role !== 'system')
+    .map(m => {
+      return {
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }]
+      };
+    });
+
+  return { contents, systemInstruction };
+}
+
 export default async function handler(req, res) {
   const origin = req.headers['origin'] || '';
   const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : '*';
@@ -18,59 +35,53 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
-  
-  // Error jika method bukan POST
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Metode tidak diizinkan oleh Alter AI' });
-  }
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Metode ditolak oleh Alter AI' });
 
   const data = req.body;
-  if (!data?.messages || !Array.isArray(data.messages)) {
-    return res.status(400).json({ error: 'Format pesan tidak valid bagi sistem Alter AI' });
-  }
+  if (!data?.messages) return res.status(400).json({ error: 'Data tidak lengkap untuk Alter AI' });
 
   try {
-    // Menggunakan model Groq (Search otomatis mati karena tidak ada parameter tools)
-    const model = 'llama-3.3-70b-versatile';
+    // Menggunakan Gemini 1.5 Flash untuk limit GRATIS terbesar dan kecepatan maksimal
+    const model = 'gemini-1.5-flash'; 
+    const { contents, systemInstruction } = toGeminiMessages(data.messages);
 
     const body = {
-      model,
-      messages: data.messages,
-      max_tokens: 8192,
-      temperature: 0.7,
+      contents,
+      tools: [{ google_search: {} }], // MENGAKTIFKAN SEARCH GOOGLE
+      generationConfig: {
+        maxOutputTokens: 8192,
+        temperature: 0.7,
+      },
     };
+    if (systemInstruction) body.systemInstruction = systemInstruction;
 
-    const groqRes = await fetch(
-      `https://api.groq.com/openai/v1/chat/completions`,
+    const geminiRes = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${GEMINI_API_KEY}`,
       {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${GROQ_API_KEY}`
-        },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       }
     );
 
-    const groqData = await groqRes.json();
+    const geminiData = await geminiRes.json();
 
-    if (groqData.error) {
-      if (groqRes.status === 429) {
-        return res.status(429).json({ 
-          error: 'Alter AI sedang sibuk (Rate Limit), silakan coba lagi sebentar lagi', 
-          resetTime: '60s' 
-        });
+    if (geminiData.error) {
+      const errCode = geminiData.error.code;
+      if (errCode === 429) {
+        return res.status(429).json({ error: 'Alter AI mencapai limit trafik. Coba lagi dalam 60 detik.' });
       }
-      return res.status(500).json({ error: `Gangguan pada otak Alter AI: ${groqData.error.message}` });
+      return res.status(500).json({ error: 'Gangguan pada Alter AI: ' + geminiData.error.message });
     }
 
-    const text = groqData.choices?.[0]?.message?.content || '';
+    const parts = geminiData.candidates?.[0]?.content?.parts || [];
+    const text = parts.map(p => p.text).join('');
 
     return res.status(200).json({
       choices: [{ message: { role: 'assistant', content: text } }]
     });
 
   } catch (e) {
-    return res.status(500).json({ error: 'Sistem Alter AI gagal terhubung ke server: ' + e.message });
+    return res.status(500).json({ error: 'Sistem Alter AI mengalami kegagalan koneksi.' });
   }
 }
