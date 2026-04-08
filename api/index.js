@@ -1,5 +1,4 @@
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const SERPER_API_KEY = process.env.SERPER_API_KEY;
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
@@ -10,52 +9,6 @@ const ALLOWED_ORIGINS = [
   null,
 ];
 
-function needsSearch(text) {
-  const t = text.toLowerCase().trim();
-  const skip = ['siapa kamu','kamu siapa','siapa pembuat','siapa yang buat',
-    'siapa ceo','siapa pemilik','siapa founder','nama kamu',
-    'alterx','alternative inc','alvaro','model apa','versi kamu',
-    'hi','halo','hey','hello','hai','hei','apa kabar',
-    'selamat pagi','selamat siang','selamat malam','makasih','terima kasih'];
-  if (skip.some(s => t.includes(s))) return false;
-
-  const triggers = [
-    'siapa','apa itu','apa yang','jelaskan','bagaimana','kapan',
-    'dimana','berapa','kenapa','mengapa','cara','tutorial',
-    'berita','terbaru','terkini','sekarang','hari ini','harga',
-    'cuaca','jadwal','definisi','pengertian','contoh','rumus',
-    'fakta','perbedaan','perbandingan','kelebihan','kekurangan',
-    'rekomendasi','tips','trik','langkah','fungsi','manfaat',
-    'what is','what are','who is','who are','how to','how do',
-    'when did','when is','where is','where are','why is','why does',
-    'explain','define','latest','recent','news','current','today',
-    'difference','compare','best','top','list of','example',
-  ];
-  if (triggers.some(tr => t.includes(tr))) return true;
-  return t.split(/\s+/).length >= 5;
-}
-
-async function webSearch(query) {
-  try {
-    const res = await fetch('https://google.serper.dev/search', {
-      method: 'POST',
-      headers: { 'X-API-KEY': SERPER_API_KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: query, num: 5, hl: 'id', gl: 'id' }),
-    });
-    if (!res.ok) return null;
-    const json = await res.json();
-    const results = [];
-    if (json.answerBox?.answer) results.push(`📌 ${json.answerBox.answer}`);
-    if (json.answerBox?.snippet) results.push(`📌 ${json.answerBox.snippet}`);
-    if (json.organic?.length) {
-      json.organic.slice(0, 5).forEach(r => {
-        if (r.snippet) results.push(`• ${r.title}\n  ${r.snippet}\n  (${r.link})`);
-      });
-    }
-    return results.length ? results.join('\n\n') : null;
-  } catch { return null; }
-}
-
 // Convert OpenAI-style messages to Gemini format
 function toGeminiMessages(messages) {
   const systemMsg = messages.find(m => m.role === 'system');
@@ -64,12 +17,10 @@ function toGeminiMessages(messages) {
   const contents = messages
     .filter(m => m.role !== 'system')
     .map(m => {
-      // Handle array content (vision)
       if (Array.isArray(m.content)) {
         const parts = m.content.map(c => {
           if (c.type === 'text') return { text: c.text };
           if (c.type === 'image_url') {
-            // data:mime;base64,xxx
             const match = c.image_url.url.match(/^data:(.+);base64,(.+)$/);
             if (match) return { inline_data: { mime_type: match[1], data: match[2] } };
           }
@@ -103,39 +54,16 @@ export default async function handler(req, res) {
 
   let messages = data.messages;
 
-  // Ambil pesan terakhir user
-  let lastUserMsg = '';
-  for (const m of [...messages].reverse()) {
-    if (m.role === 'user') { lastUserMsg = m.content; break; }
-  }
-  const lastUserText = Array.isArray(lastUserMsg)
-    ? (lastUserMsg.find(c => c.type === 'text')?.text || '')
-    : lastUserMsg;
-
-  // Inject search result
-  const hasImage = Array.isArray(lastUserMsg);
-  if (!hasImage && needsSearch(lastUserText)) {
-    const searchResult = await webSearch(lastUserText);
-    if (searchResult) {
-      const ctx = `\n\n[HASIL PENCARIAN GOOGLE untuk: "${lastUserText}"]\n`
-        + searchResult
-        + `\n\nGunakan informasi di atas untuk menjawab dengan akurat dan terkini. `
-        + `Jawab secara natural, jangan sebut bahwa kamu melakukan pencarian.`;
-      messages = messages.map(m =>
-        m.role === 'system' ? { ...m, content: m.content + ctx } : m
-      );
-    }
-  }
-
-  // Kirim ke Gemini
+  // Kirim ke Gemini 2.5 Flash dengan Google Search grounding
   try {
     const model = 'gemini-2.5-flash';
     const { systemInstruction, contents } = toGeminiMessages(messages);
 
     const body = {
       contents,
+      tools: [{ google_search: {} }], // Built-in Google Search grounding
       generationConfig: {
-        maxOutputTokens: 2048,
+        maxOutputTokens: 8192,
         temperature: 0.7,
       },
     };
@@ -160,8 +88,13 @@ export default async function handler(req, res) {
       return res.status(500).json({ error: errMsg || 'Gemini API error' });
     }
 
-    // Convert Gemini response to OpenAI-compatible format
-    const text = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+    // Extract text — handle thinking blocks too
+    const parts = geminiData.candidates?.[0]?.content?.parts || [];
+    const text = parts
+      .filter(p => p.text && !p.thought)
+      .map(p => p.text)
+      .join('') || '';
+
     return res.status(200).json({
       choices: [{ message: { role: 'assistant', content: text } }]
     });
