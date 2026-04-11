@@ -19,11 +19,29 @@ function getTodayStr() {
 
 function needsSearch(text) {
   const t = text.toLowerCase().trim();
-  const skip = ['siapa kamu','kamu siapa','siapa pembuat','siapa yang buat',
+  const skip = [
+    // Identity & creator
+    'siapa kamu','kamu siapa','siapa pembuat','siapa yang buat',
     'siapa ceo','siapa pemilik','siapa founder','nama kamu',
     'alterx','alternative studios','alvaro','model apa','versi kamu',
-    'hi','halo','hey','hello','hai','hei','apa kabar',
-    'selamat pagi','selamat siang','selamat malam','makasih','terima kasih'];
+    'kamu dibuat','yang membuatmu','siapa developermu','kamu buatan',
+    'kamu dari','kamu produk','tentang kamu','tentang dirimu',
+    'who made you','who created you','who built you','what are you',
+    'what model','your creator','your developer','your company',
+    // Feelings / self-reflection
+    'apakah kamu bangga','kamu bangga','kamu senang','kamu sedih',
+    'kamu suka','kamu benci','kamu takut','kamu marah','kamu bahagia',
+    'perasaanmu','bagaimana perasaan','apakah kamu merasa',
+    'are you proud','do you feel','how do you feel','do you like',
+    'do you love','are you happy','are you sad',
+    // Greetings / small talk
+    'hi','halo','hey','hello','hai','hei','apa kabar','hows it going',
+    'selamat pagi','selamat siang','selamat malam','makasih','terima kasih',
+    'good morning','good night','good evening','thanks','thank you',
+    // Capabilities
+    'apa yang bisa kamu','kamu bisa apa','kemampuanmu','fitur kamu',
+    'what can you do','your capabilities','your features',
+  ];
   if (skip.some(s => t.includes(s))) return false;
   const triggers = [
     'siapa','apa itu','apa yang','jelaskan','bagaimana','kapan',
