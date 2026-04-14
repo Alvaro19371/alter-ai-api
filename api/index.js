@@ -1,6 +1,6 @@
-const HF_API_KEY     = process.env.HF_API_KEY;
+const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-const HF_MODEL       = 'Qwen/Qwen2.5-72B-Instruct';
+const GROQ_MODEL     = 'llama-3.3-70b-versatile';
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
@@ -20,27 +20,31 @@ function getTodayStr() {
 function needsSearch(text) {
   const t = text.toLowerCase().trim();
   const skip = [
-    // Identity & creator
+    // Identity
     'siapa kamu','kamu siapa','siapa pembuat','siapa yang buat',
     'siapa ceo','siapa pemilik','siapa founder','nama kamu',
-    'alterx','alternative studios','alvaro','model apa','versi kamu',
-    'kamu dibuat','yang membuatmu','siapa developermu','kamu buatan',
-    'kamu dari','kamu produk','tentang kamu','tentang dirimu',
-    'who made you','who created you','who built you','what are you',
-    'what model','your creator','your developer','your company',
-    // Feelings / self-reflection
-    'apakah kamu bangga','kamu bangga','kamu senang','kamu sedih',
-    'kamu suka','kamu benci','kamu takut','kamu marah','kamu bahagia',
-    'perasaanmu','bagaimana perasaan','apakah kamu merasa',
-    'are you proud','do you feel','how do you feel','do you like',
-    'do you love','are you happy','are you sad',
-    // Greetings / small talk
-    'hi','halo','hey','hello','hai','hei','apa kabar','hows it going',
+    'alterx','alterx nexus','alternative studios','alternative inc','alvaro',
+    'model apa','versi kamu','kamu dibuat','kamu buatan','tentang kamu',
+    'who made you','who created you','what are you','what model','your creator',
+    // Feelings / self
+    'apakah kamu bangga','kamu bangga','kamu senang','kamu sedih','kamu suka',
+    'perasaanmu','bagaimana perasaan','apakah kamu merasa','kamu punya perasaan',
+    'apakah kamu punya','kamu sadar','kamu hidup','kamu nyata',
+    'are you proud','do you feel','how do you feel','do you like','do you love',
+    'are you conscious','are you alive','are you real','do you have feelings',
+    // Opinion
+    'menurut kamu','pendapat kamu','kamu pikir','kamu rasa','favorit kamu',
+    'what do you think','in your opinion','do you prefer','your favorite',
+    // Greetings
+    'hi','halo','hey','hello','hai','hei','apa kabar','pagi','siang','malam','sore',
     'selamat pagi','selamat siang','selamat malam','makasih','terima kasih',
     'good morning','good night','good evening','thanks','thank you',
     // Capabilities
-    'apa yang bisa kamu','kamu bisa apa','kemampuanmu','fitur kamu',
+    'apa yang bisa kamu','kamu bisa apa','kemampuanmu','fitur kamu','bisa bantu apa',
     'what can you do','your capabilities','your features',
+    // Date/time (already in system prompt)
+    'sekarang jam','jam berapa','tanggal berapa','hari ini tanggal',
+    'what time is it','what date is it','what day is it',
   ];
   if (skip.some(s => t.includes(s))) return false;
   const triggers = [
@@ -158,7 +162,7 @@ export default async function handler(req, res) {
   }
 
   // Convert messages for HF
-  const hfMessages = messages.map(m => {
+  const groqMessages = messages.map(m => {
     if (Array.isArray(m.content)) {
       const parts = m.content.map(c => {
         if (c.type === 'text') return { type: 'text', text: c.text };
@@ -171,37 +175,39 @@ export default async function handler(req, res) {
   });
 
   try {
-    const hfRes = await fetch('https://router.huggingface.co/v1/chat/completions', {
+    const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${HF_API_KEY}`,
+        'Authorization': `Bearer ${GROQ_API_KEY}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: HF_MODEL,
-        messages: hfMessages,
+        model: GROQ_MODEL,
+        messages: groqMessages,
         max_tokens: 4096,
         temperature: 0.7,
-        stream: false,
       }),
     });
 
-    const hfData = await hfRes.json();
+    const groqData = await groqRes.json();
 
-    if (hfData.error) {
-      const errMsg = typeof hfData.error === 'string' ? hfData.error : hfData.error?.message || 'HF API error';
-      if (hfRes.status === 429 || errMsg.includes('rate limit') || errMsg.includes('high demand')) {
-        return res.status(429).json({ error: '__RATE_LIMIT__', resetTime: '60s' });
-      }
-      if (errMsg.includes('not found') || errMsg.includes('loading')) {
+    if (groqData.error) {
+      const errMsg = groqData.error.message || '';
+      const errType = groqData.error.type || '';
+      if (errMsg.includes('decommissioned') || errMsg.includes('no longer supported')) {
         return res.status(500).json({ error: '__MODEL_UNAVAILABLE__' });
       }
-      return res.status(500).json({ error: errMsg });
+      if (groqRes.status === 429 || errType === 'tokens' || errMsg.includes('rate_limit')) {
+        const resetTokens = groqRes.headers.get('x-ratelimit-reset-tokens') || '';
+        const resetReqs   = groqRes.headers.get('x-ratelimit-reset-requests') || '';
+        return res.status(429).json({ error: '__RATE_LIMIT__', resetTime: resetTokens || resetReqs || '60s' });
+      }
+      return res.status(500).json({ error: errMsg || 'Groq API error' });
     }
 
     // Return with sources for frontend to render
     return res.status(200).json({
-      ...hfData,
+      ...groqData,
       sources: searchSources,
     });
 
