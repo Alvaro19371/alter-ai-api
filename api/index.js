@@ -1,6 +1,6 @@
 const GROQ_API_KEY   = process.env.GROQ_API_KEY;
 const TAVILY_API_KEY = process.env.TAVILY_API_KEY;
-const GROQ_MODEL     = 'llama-3.1-8b-instant';
+const GROQ_MODEL     = 'qwen/qwen3.8-27b';
 
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
