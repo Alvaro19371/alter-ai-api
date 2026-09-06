@@ -5,6 +5,8 @@ const GROQ_MODEL     = 'qwen/qwen3.8-27b';
 const ALLOWED_ORIGINS = [
   'https://chat.alvaspec.my.id',
   'http://chat.alvaspec.my.id',
+  'https://indonesiaglobal.sch.id',
+  'http://indonesiaglobal.sch.id',
   'https://alternativechatai.ct.ws',
   'http://alternativechatai.ct.ws',
   'https://alter-ai-bmbd3azfg-alvaro19371s-projects.vercel.app',
