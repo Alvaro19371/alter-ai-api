@@ -41,7 +41,7 @@ function buildKeyPool(prefix) {
 
 const GROQ_KEYS   = buildKeyPool('GROQ_API_KEY');
 const TAVILY_KEYS = buildKeyPool('TAVILY_API_KEY');
-const GROQ_MODEL  = 'qwen/qwen3-8b'; // update model jika perlu
+const GROQ_MODEL  = 'qwen/qwen3.8-27b';
 
 if (GROQ_KEYS.length === 0) {
   console.error('[AlterAI] WARNING: No GROQ_API_KEY found in environment!');
@@ -327,4 +327,3 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Gagal menghubungi AI: ' + e.message });
   }
 }
- 
