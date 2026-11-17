@@ -1,18 +1,46 @@
 // ══════════════════════════════════════════════════════════════
 //  Alter AI Backend — api/index.js
 //  Multi-key Groq rotation + per-user/guest slot isolation
+//  + Syntax Mode (openai/gpt-oss-120b)
 // ══════════════════════════════════════════════════════════════
 //
-//  ENV VARS yang dibutuhkan di Vercel:
-//  ┌─────────────────────────────────────────────────────────┐
-//  │  GROQ_API_KEY      → key utama (wajib)                  │
-//  │  GROQ_API_KEY_2    → key ke-2 (opsional)                │
-//  │  GROQ_API_KEY_3    → key ke-3 (opsional)                │
-//  │  GROQ_API_KEY_4    → key ke-4 (opsional)                │
-//  │  GROQ_API_KEY_5    → key ke-5 (opsional)                │
-//  │  TAVILY_API_KEY    → untuk web search                   │
-//  │  TAVILY_API_KEY_2  → Tavily key ke-2 (opsional)         │
-//  └─────────────────────────────────────────────────────────┘
+//  ┌──────────────────────────────────────────────────────────┐
+//  │  SETUP ENV VARS DI VERCEL                               │
+//  ├──────────────────────────────────────────────────────────┤
+//  │  GROQ_API_KEY          → Alter AI key utama (wajib)     │
+//  │  GROQ_API_KEY_2        → Alter AI key ke-2 (opsional)   │
+//  │  GROQ_API_KEY_3        → Alter AI key ke-3 (opsional)   │
+//  │                                                          │
+//  │  GROQ_API_KEY_SYNTAX   → Logic One key (opsional)        │
+//  │  GROQ_API_KEY_SYNTAX_2 → Logic One key ke-2 (opsional)  │
+//  │                                                          │
+//  │  TAVILY_API_KEY        → web search (wajib)             │
+//  │  TAVILY_API_KEY_2      → Tavily key ke-2 (opsional)     │
+//  │                                                          │
+//  │  API_TOKEN             → secret token (WAJIB untuk      │
+//  │                          keamanan). Set sembarang string │
+//  │                          panjang, lalu masukkan value    │
+//  │                          yang SAMA ke index.html di      │
+//  │                          variabel _API_TOKEN.            │
+//  └──────────────────────────────────────────────────────────┘
+//
+//  CARA DAPAT GROQ API KEY UNTUK openai/gpt-oss-120b:
+//  1. Buka https://console.groq.com
+//  2. Login / buat akun
+//  3. Klik "API Keys" di sidebar → "Create API Key"
+//  4. Kasih nama misal "syntax-key"
+//  5. Copy key-nya (mulai dari "gsk_...")
+//  6. Di Vercel: Settings → Environment Variables
+//     → Name: GROQ_API_KEY_SYNTAX
+//     → Value: gsk_xxxxxxxxxxxx
+//  7. Redeploy
+//
+//  NOTE: openai/gpt-oss-120b tersedia di Groq sebagai preview model.
+//  Kalau mau pisahkan quota Syntax dari Alter AI, buat API key baru
+//  di Groq dan taruh di GROQ_API_KEY_SYNTAX.
+//  Kalau mau share key yang sama, kosongkan GROQ_API_KEY_SYNTAX —
+//  backend otomatis fallback ke GROQ_API_KEY pool.
+// ══════════════════════════════════════════════════════════════
 //
 //  Strategy:
 //  - Tiap request pilih Groq key berdasarkan:
@@ -39,9 +67,18 @@ function buildKeyPool(prefix) {
   return keys;
 }
 
-const GROQ_KEYS   = buildKeyPool('GROQ_API_KEY');
-const TAVILY_KEYS = buildKeyPool('TAVILY_API_KEY');
-const GROQ_MODEL  = 'qwen/qwen3.8-27b';
+const GROQ_KEYS        = buildKeyPool('GROQ_API_KEY');
+const GROQ_KEYS_SYNTAX = buildKeyPool('GROQ_API_KEY_SYNTAX'); // key khusus Syntax/GPT-OSS
+const TAVILY_KEYS      = buildKeyPool('TAVILY_API_KEY');
+
+// ── Model alias map — frontend kirim alias, backend resolve ke model nyata ──
+// Ini menyembunyikan nama model asli dari source frontend
+const MODEL_MAP = {
+  'alterai':   'qwen/qwen3.8-27b',
+  'logic-one': 'openai/gpt-oss-120b',
+};
+const MODEL_ALTERAI = MODEL_MAP['alterai'];
+const MODEL_LOGIC   = MODEL_MAP['logic-one'];
 
 if (GROQ_KEYS.length === 0) {
   console.error('[AlterAI] WARNING: No GROQ_API_KEY found in environment!');
@@ -50,17 +87,11 @@ if (GROQ_KEYS.length === 0) {
 // ── Global round-robin counter (in-memory, per cold-start) ──
 let _globalCounter = 0;
 
-function getGroqKey(userSlot = 0) {
-  if (GROQ_KEYS.length === 0) return null;
-  const idx = (_globalCounter + userSlot) % GROQ_KEYS.length;
+function getGroqKey(userSlot = 0, pool = GROQ_KEYS) {
+  if (pool.length === 0) return null;
+  const idx = (_globalCounter + userSlot) % pool.length;
   _globalCounter++;
-  return { key: GROQ_KEYS[idx], idx };
-}
-
-function getNextGroqKey(currentIdx) {
-  if (GROQ_KEYS.length <= 1) return null;
-  const nextIdx = (currentIdx + 1) % GROQ_KEYS.length;
-  return { key: GROQ_KEYS[nextIdx], idx: nextIdx };
+  return { key: pool[idx], idx };
 }
 
 function getTavilyKey(userSlot = 0) {
@@ -68,17 +99,19 @@ function getTavilyKey(userSlot = 0) {
   return TAVILY_KEYS[userSlot % TAVILY_KEYS.length];
 }
 
-// ── Allowed origins ──
-const ALLOWED_ORIGINS = [
+// ── Allowed origins — only these may call the API ──
+// 'null' di-remove: file:// dan unknown origin TIDAK boleh lewat
+const ALLOWED_ORIGINS = new Set([
   'https://chat.alvaspec.my.id',
-  'http://chat.alvaspec.my.id',
   'https://indonesiaglobal.sch.id',
-  'http://indonesiaglobal.sch.id',
   'https://alternativechatai.ct.ws',
-  'http://alternativechatai.ct.ws',
   'https://alter-ai-bmbd3azfg-alvaro19371s-projects.vercel.app',
-  null,
-];
+]);
+
+// ── Secret token — set API_TOKEN env var di Vercel ──
+// Frontend harus kirim header: X-API-Token: <value>
+// Tanpa token yang benar → 401 Unauthorized
+const API_TOKEN = process.env.API_TOKEN || null;
 
 // ── Helpers ──
 function getTodayStr() {
@@ -170,31 +203,32 @@ async function tavilySearch(query, userSlot = 0) {
 }
 
 // ── Core: call Groq with auto-fallback on 429 ──
-async function callGroq(messages, userSlot, attempt = 0) {
-  if (attempt >= GROQ_KEYS.length) {
-    // Semua key habis limitnya
+async function callGroq(messages, userSlot, model = MODEL_ALTERAI, attempt = 0) {
+  // Pilih key pool: Syntax model punya pool sendiri (kalau diset), fallback ke pool utama
+  const isLogicOne = model === MODEL_LOGIC;
+  const pool = (isLogicOne && GROQ_KEYS_SYNTAX.length > 0) ? GROQ_KEYS_SYNTAX : GROQ_KEYS;
+
+  if (attempt >= pool.length) {
     return {
       status: 429,
       body: { error: '__RATE_LIMIT__', resetTime: '60s', keysExhausted: true }
     };
   }
 
-  // Pilih key: attempt 0 = slot-based, attempt 1+ = fallback ke key berikutnya
   let keyInfo;
   if (attempt === 0) {
-    keyInfo = getGroqKey(userSlot);
+    keyInfo = getGroqKey(userSlot, pool);
   } else {
-    // Fallback: hitung idx dari previous attempt
-    const prevIdx = (_globalCounter - 1 + userSlot) % GROQ_KEYS.length;
-    const nextIdx = (prevIdx + attempt) % GROQ_KEYS.length;
-    keyInfo = { key: GROQ_KEYS[nextIdx], idx: nextIdx };
+    const prevIdx = (_globalCounter - 1 + userSlot) % pool.length;
+    const nextIdx = (prevIdx + attempt) % pool.length;
+    keyInfo = { key: pool[nextIdx], idx: nextIdx };
   }
 
   if (!keyInfo?.key) {
     return { status: 500, body: { error: 'No API key available' } };
   }
 
-  console.log(`[AlterAI] Using Groq key #${keyInfo.idx + 1}/${GROQ_KEYS.length} (slot=${userSlot}, attempt=${attempt})`);
+  console.log(`[AlterAI] model=${model} key#${keyInfo.idx + 1}/${pool.length} slot=${userSlot} attempt=${attempt}`);
 
   const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
     method: 'POST',
@@ -203,10 +237,10 @@ async function callGroq(messages, userSlot, attempt = 0) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      model: GROQ_MODEL,
+      model,
       messages,
-      max_tokens: 4096,
-      temperature: 0.7,
+      max_tokens: 8192,
+      temperature: isLogicOne ? 0.4 : 0.7,
     }),
   });
 
@@ -225,8 +259,7 @@ async function callGroq(messages, userSlot, attempt = 0) {
     // Rate limit → auto-fallback ke key berikutnya
     if (groqRes.status === 429 || errType === 'tokens' || errMsg.includes('rate_limit')) {
       console.log(`[AlterAI] Key #${keyInfo.idx + 1} hit rate limit — trying next key...`);
-      // Rekursif ke key berikutnya
-      return callGroq(messages, userSlot, attempt + 1);
+      return callGroq(messages, userSlot, model, attempt + 1);
     }
 
     return { status: 500, body: { error: errMsg || 'Groq API error' } };
@@ -238,14 +271,31 @@ async function callGroq(messages, userSlot, attempt = 0) {
 // ── Main handler ──
 export default async function handler(req, res) {
   const origin = req.headers['origin'] || '';
-  const allowedOrigin = ALLOWED_ORIGINS.includes(origin) ? origin : '*';
 
-  res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  // ── CORS: hanya izinkan origin yang terdaftar ──
+  // Kalau buka dari file:// atau domain lain → origin tidak ada di whitelist
+  // → browser tidak dapat akses (blocked by CORS)
+  // Tambahan: cek secret token untuk blokir request non-browser juga
+  if (!ALLOWED_ORIGINS.has(origin)) {
+    // Jangan kasih info apa pun — cukup 403
+    return res.status(403).end();
+  }
+
+  res.setHeader('Access-Control-Allow-Origin', origin);
+  res.setHeader('Vary', 'Origin');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-User-Slot, X-Call-Count');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-User-Slot, X-Call-Count, X-API-Token');
 
   if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+  if (req.method !== 'POST') return res.status(405).end();
+
+  // ── Secret token check — blokir curl/Postman/script langsung ──
+  if (API_TOKEN) {
+    const sentToken = req.headers['x-api-token'] || '';
+    if (sentToken !== API_TOKEN) {
+      return res.status(401).end(); // jangan kasih info error
+    }
+  }
 
   const data = req.body;
   if (!data?.messages || !Array.isArray(data.messages))
@@ -254,6 +304,13 @@ export default async function handler(req, res) {
   // ── Parse user slot from frontend header ──
   const rawSlot = req.headers['x-user-slot'];
   const userSlot = rawSlot ? (parseInt(rawSlot, 10) || 0) : 0;
+
+  // ── Resolve model via alias map — frontend kirim alias, bukan nama asli ──
+  const alias = data.model || 'alterai';
+  const resolvedModel = MODEL_MAP[alias] || MODEL_ALTERAI;
+  if (!MODEL_MAP[alias]) {
+    console.warn(`[AlterAI] Unknown model alias "${alias}", fallback to alterai`);
+  }
 
   let messages = data.messages;
   let searchSources = [];
@@ -300,7 +357,7 @@ export default async function handler(req, res) {
 
   // ── Call Groq with auto key rotation ──
   try {
-    const result = await callGroq(groqMessages, userSlot);
+    const result = await callGroq(groqMessages, userSlot, resolvedModel);
 
     if (result.status !== 200) {
       // Semua key kena rate limit
